@@ -11,19 +11,11 @@ use tracing::debug;
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[cfg(not(feature = "cli"))]
 pub(crate) static ERR_TIMEOUT: once_cell::sync::Lazy<u64> = once_cell::sync::Lazy::new(|| {
     env::var("ERROR_TIMEOUT")
         .unwrap_or_else(|_| "60".to_string())
         .parse::<u64>()
         .expect("Cannot parse ERROR_TIMEOUT to u64")
-});
-
-pub(crate) static NIOCA_RENEW_SECS: once_cell::sync::Lazy<u64> = once_cell::sync::Lazy::new(|| {
-    env::var("NIOCA_RENEW_SECS")
-        .unwrap_or_else(|_| "3600".to_string())
-        .parse::<u64>()
-        .expect("Cannot parse NIOCA_RENEW_SECS to u64")
 });
 
 #[cfg(feature = "actix")]
@@ -250,18 +242,10 @@ pub(crate) async fn fetch_cert_x509(
             let status = resp.status();
             match resp.json::<CertX509Response>().await {
                 Ok(certs) => {
-                    // Nioca returns the not_After in seconds
+                    // Nioca returns the not_after in seconds
                     let now = Utc::now().timestamp();
-                    let diff = certs.not_after - now;
-                    assert!(diff > 0);
-                    let diff = diff as u64;
-
-                    let renew = if *NIOCA_RENEW_SECS > diff {
-                        diff - *NIOCA_RENEW_SECS
-                    } else {
-                        diff * 90 / 100
-                    };
-
+                    let diff = certs.not_after.saturating_sub(now);
+                    let renew = diff as u64 * 90 / 100;
                     Ok((certs, renew))
                 }
                 Err(err) => {

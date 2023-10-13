@@ -23,6 +23,7 @@ axum-server = { version = "0.5", optional = true, features = ["tls-rustls"] }
 base64 = "0.21"
 chrono = { version = "0.4", default-features = false, features = ["alloc", "clock", "serde", "std"] }
 clap = { version = "4.1", optional = true, features = ["derive"] }
+ctrlc = {  version = "3.4.1", features = ["termination"] }
 der = { version = "0.7", features = ["std", "pem"] }
 dotenvy = "0.15"
 flume = "0.11"

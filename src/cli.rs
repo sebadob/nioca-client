@@ -20,7 +20,7 @@ pub(crate) enum CliArgs {
     /// Uninstalls the nioca-client from the system
     Uninstall,
     FetchRoot(CmdFetchRoot),
-    Daemon(CmdDaemonize),
+    Daemonize(CmdDaemonize),
     Ssh(CmdSsh),
     X509(CmdX509),
 }
@@ -98,7 +98,7 @@ pub async fn execute() -> anyhow::Result<()> {
         CliArgs::FetchRoot(cmd) => {
             fetch_root_ca(&cmd).await?;
         }
-        CliArgs::Daemon(cmd) => {
+        CliArgs::Daemonize(cmd) => {
             daemonize(&cmd).await?;
         }
         CliArgs::Ssh(cmd) => {
