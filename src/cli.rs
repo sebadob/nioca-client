@@ -80,15 +80,15 @@ pub async fn execute() -> anyhow::Result<()> {
             uninstall_from_sys().await?;
         }
         CliArgs::FetchRoot(cmd) => {
-            let config = get_config(&cmd.config);
+            let config = get_config(&cmd.config).await;
             fetch_root_ca(&cmd, &config).await?;
         }
         CliArgs::Ssh(cmd) => {
-            let config = get_config(&cmd.config);
+            let config = get_config(&cmd.config).await;
             fetch_ssh(&cmd, &config).await?;
         }
         CliArgs::X509(cmd) => {
-            let config = get_config(&cmd.config);
+            let config = get_config(&cmd.config).await;
             fetch_x509(&cmd, &config).await?
         }
     }
@@ -96,7 +96,7 @@ pub async fn execute() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_config(path: &Option<String>) -> NiocaConfig {
+async fn get_config(path: &Option<String>) -> NiocaConfig {
     if let Some(cfg) = path {
         dotenvy::from_filename(cfg).ok();
     } else {
@@ -112,7 +112,7 @@ fn get_config(path: &Option<String>) -> NiocaConfig {
             }
         }
     }
-    NiocaConfig::from_env()
+    NiocaConfig::from_env().await
 }
 
 async fn install_on_sys() -> anyhow::Result<()> {
@@ -555,6 +555,11 @@ HostCertificate {}
 
 async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()> {
     use std::fmt::Write;
+
+    if certs.host_key_pair.typ == Some(SshCertType::User) {
+        eprintln!("Received SSH Cert Type is 'User' - not adding it to known hosts");
+        return Ok(());
+    }
 
     println!("Installing CA certificate into known hosts");
 
