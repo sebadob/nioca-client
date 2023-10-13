@@ -533,6 +533,11 @@ async fn install_host_ssh(certs: &SshCertificateResponse) -> anyhow::Result<()> 
         fs::set_permissions(&path_id, Permissions::from_mode(0o600)).await?;
     }
 
+    // TODO `sshd` prints out a weird error when you log in with certificates, even though everything works fine:
+    // error: Public key for /etc/ssh/id_nioca_host does not match private key
+    // -> try to find the reason for that, since it does not make any sense
+    // -> we do not have (and need) any public key, but the certificate instead
+    // -> needs another sshd config adjustment here?
     let path_id_pub = "/etc/ssh/id_nioca_host.pub";
     fs::write(&path_id_pub, certs.host_key_pair.id_pub.as_bytes()).await?;
 
@@ -590,13 +595,14 @@ async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()
         }
     };
 
-    let path_known_hosts = format!("{}/.ssh/known_hosts", home.display());
+    let path = format!("{}/.ssh", home.display());
+    let path_known_hosts = format!("{}/known_hosts", path);
     if fs::File::open(&path_known_hosts).await.is_err() {
         println!(
             "known_hosts file not found in {} - creating it now",
             path_known_hosts
         );
-        fs::create_dir_all(&path_known_hosts).await?;
+        fs::create_dir_all(&path).await?;
         fs::write(&path_known_hosts, b"").await?;
         #[cfg(target_family = "unix")]
         {
@@ -623,7 +629,7 @@ async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()
                 );
             }
         } else {
-            writeln!(known_hosts_new, "{}", entry)?;
+            writeln!(known_hosts_new, "{}", line)?;
         }
     }
 
