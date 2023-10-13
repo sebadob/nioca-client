@@ -18,6 +18,8 @@ use tokio::{fs, time};
 pub(crate) enum CliArgs {
     /// Installs the nioca-client into the system
     Install,
+    /// Installs the nioca-client systemd service into the system
+    InstallService,
     /// Uninstalls the nioca-client from the system
     Uninstall,
     FetchRoot(CmdFetchRoot),
@@ -35,8 +37,8 @@ pub(crate) struct CmdFetchRoot {
     pub config: Option<String>,
 
     /// Output path for the fetched certificates
-    #[arg(short, long, default_value = "$HOME/.nioca/")]
-    pub destination: String,
+    #[arg(short, long)]
+    pub destination: Option<String>,
 
     /// Fetches the root CA's certificate and verifies it with the given fingerprint
     #[arg(short, long)]
@@ -91,9 +93,31 @@ pub async fn execute() -> anyhow::Result<()> {
     let args: CliArgs = CliArgs::parse();
     match args {
         CliArgs::Install => {
+            #[cfg(not(target_family = "unix"))]
+            eprintln!("The Installation only works on unix systems at the moment");
+
+            #[cfg(target_family = "unix")]
             install_on_sys().await?;
         }
+        CliArgs::InstallService => {
+            #[cfg(not(target_family = "unix"))]
+            eprintln!("The Service File can only be installed on unix systems");
+
+            #[cfg(target_family = "unix")]
+            {
+                // check if nioca-client is already installed globally and install if not
+                let path = "/usr/local/bin/nioca-client";
+                if fs::try_exists(&path).await.is_err() {
+                    install_on_sys().await?;
+                }
+                install_systemd_service().await?;
+            }
+        }
         CliArgs::Uninstall => {
+            #[cfg(not(target_family = "unix"))]
+            eprintln!("The Uninstallation only works on unix systems at the moment");
+
+            #[cfg(target_family = "unix")]
             uninstall_from_sys().await?;
         }
         CliArgs::FetchRoot(cmd) => {
@@ -130,6 +154,7 @@ async fn get_config(path: &Option<String>) -> NiocaConfig {
     NiocaConfig::from_env().await
 }
 
+#[cfg(target_family = "unix")]
 async fn install_on_sys() -> anyhow::Result<()> {
     let home = match home::home_dir() {
         Some(path) => path,
@@ -216,6 +241,36 @@ certificate before it expires. How often depends on your config in Nioca of cour
     Ok(())
 }
 
+#[cfg(target_family = "unix")]
+async fn install_systemd_service() -> anyhow::Result<()> {
+    let (path, file_name, contents) = systemd_service_file("root");
+
+    // make sure the system is using systemd
+    if fs::try_exists(&path).await.is_err() {
+        return Err(anyhow::Error::msg(
+            "Only systemd is supported at the moment",
+        ));
+    }
+
+    // create the service file
+    let svc_path = format!("{}/{}", path, file_name);
+    fs::write(&svc_path, contents.as_bytes()).await?;
+
+    systemd_reload_services().await?;
+    systemd_enable_service(&file_name).await?;
+
+    println!(
+        r#"
+The 'nioca-client' service has been installed successfully.
+Check the status with:
+systemctl status nioca-client
+"#
+    );
+
+    Ok(())
+}
+
+#[cfg(target_family = "unix")]
 async fn uninstall_from_sys() -> anyhow::Result<()> {
     let home = match home::home_dir() {
         Some(path) => path,
@@ -247,6 +302,29 @@ async fn uninstall_from_sys() -> anyhow::Result<()> {
             eprintln!("Error removing nioca-client: {:?}", err);
         }
     } else {
+        // if we get here, we can be sure we are root -> uninstall systemd services too
+        let mut dir = fs::read_dir("/etc/systemd/system/").await?;
+        let mut systemd_needs_reload = false;
+        while let Some(entry) = dir.next_entry().await? {
+            if entry.metadata().await?.is_dir() {
+                continue;
+            }
+            let file_name_os = entry.file_name();
+            let file_name = file_name_os.to_str().unwrap_or_default();
+            if file_name.starts_with("nioca-client") && file_name.ends_with(".service") {
+                systemd_needs_reload = true;
+
+                // disable the systemd service and delete the file
+                systemd_disable_service(file_name).await?;
+                let path = format!("/etc/systemd/system/{}", file_name);
+                fs::remove_file(&path).await?;
+            }
+        }
+
+        if systemd_needs_reload {
+            systemd_reload_services().await?;
+        }
+
         println!("The nioca-client has been uninstalled successfully.");
     };
 
@@ -272,8 +350,8 @@ async fn fetch_root_ca(args: &CmdFetchRoot) -> anyhow::Result<()> {
             let status = resp.status();
             match resp.text().await {
                 Ok(root_pem) => {
-                    let destination = destination(&args.destination);
-                    fs::create_dir_all(&destination).await?;
+                    // let destination = destination(&args.destination);
+                    // fs::create_dir_all(&destination).await?;
 
                     println!("Fetched root certificate:\n\n{}\n", root_pem);
 
@@ -285,28 +363,33 @@ async fn fetch_root_ca(args: &CmdFetchRoot) -> anyhow::Result<()> {
                         );
                     } else {
                         println!("Certificate fingerprint verified");
-                        println!("Saving root certificate to {}root.pem", destination);
-                        fs::write(format!("{}root.pem", destination), root_pem.as_bytes())
-                            .await
-                            .expect("Writing Root CA");
+                        if let Some(dest) = &args.destination {
+                            println!("Saving root certificate to {}root.pem", dest);
 
-                        match home::home_dir() {
-                            Some(path) => {
-                                let p = format!("{}/.nioca", path.display());
-                                fs::create_dir_all(&p).await?;
-                                let target = format!("{}/root.pem", p);
-                                println!("Saving root certificate to {}", target);
-                                fs::write(&target, root_pem.as_bytes())
-                                    .await
-                                    .expect("Writing Root CA to $HOME");
+                            let destination = destination(dest);
+                            fs::create_dir_all(&destination).await?;
+                            fs::write(format!("{}root.pem", destination), root_pem.as_bytes())
+                                .await
+                                .expect("Cannot write Root CA PEM to given destination");
+                        } else {
+                            match home::home_dir() {
+                                Some(path) => {
+                                    let p = format!("{}/.nioca", path.display());
+                                    fs::create_dir_all(&p).await?;
+                                    let target = format!("{}/root.pem", p);
+                                    println!("Saving root certificate to {}", target);
+                                    fs::write(&target, root_pem.as_bytes())
+                                        .await
+                                        .expect("Writing Root CA to $HOME");
 
-                                println!(
-                                    "\nYou can inspect the certificate with default openssl tools:\n\
-                                    openssl x509 -in {} -text -noout",
-                                    target
-                                )
+                                    println!(
+                                        "\nYou can inspect the certificate with default openssl tools:\n\
+                                        openssl x509 -in {} -text -noout",
+                                        target
+                                    )
+                                }
+                                None => eprintln!("Cannot get home directory"),
                             }
-                            None => eprintln!("Cannot get home directory"),
                         }
                     }
                 }
@@ -766,23 +849,93 @@ pub fn system_to_naive_datetime(t: SystemTime) -> chrono::NaiveDateTime {
     chrono::NaiveDateTime::from_timestamp_opt(sec + sec_diff, nsec).unwrap()
 }
 
-// fn systemd_service_file() -> String {
-//     let template = r#"[Unit]
-// Description=Meteo MotorPi Client
-// Requires=network-online.target
-// After=network-online.target
-// StartLimitIntervalSec=0
-//
-// [Service]
-// Restart=always
-// RestartSec=1
-// # root is mandatory for UART access
-// User=root
-// ExecStart=/home/netit/field-server-shutdown
-// WorkingDirectory=/home/netit
-//
-// [Install]
-// WantedBy=multi-user.target
-//
-//     "#;
-// }
+/// Returns (BasePath, ServiceName, FileContents) for the systemd *.service file
+#[cfg(target_family = "unix")]
+fn systemd_service_file(user: &str) -> (&str, String, String) {
+    let path_base = "/etc/systemd/system";
+    let file_name = if user == "root" {
+        "nioca-client.service".to_string()
+    } else {
+        format!("nioca-client-{}.service", user)
+    };
+
+    let contents = format!(
+        r#"[Unit]
+Description=Nioca Client Daemon
+Requires=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Restart=always
+RestartSec=30
+User={}
+ExecStart=/usr/local/bin/nioca-client daemonize
+
+[Install]
+WantedBy=multi-user.target
+
+"#,
+        user,
+    );
+
+    (path_base, file_name, contents)
+}
+
+#[cfg(target_family = "unix")]
+async fn systemd_reload_services() -> anyhow::Result<()> {
+    println!("Reloading systemd service files");
+    let status = Command::new("/usr/bin/systemctl")
+        .arg("daemon-reload")
+        .stdout(Stdio::piped())
+        .spawn()?
+        .wait()
+        .await?;
+    if status.success() {
+        println!("systemctl daemon-reload successful");
+    } else {
+        eprintln!("Error for systemctl daemon-reload");
+    }
+
+    Ok(())
+}
+
+#[cfg(target_family = "unix")]
+async fn systemd_enable_service(name: &str) -> anyhow::Result<()> {
+    println!("Enabling Service {}", name);
+    let status = Command::new("/usr/bin/systemctl")
+        .arg("enable")
+        .arg(name)
+        .arg("--now")
+        .stdout(Stdio::piped())
+        .spawn()?
+        .wait()
+        .await?;
+    if status.success() {
+        println!("Service {} enable successfully", name);
+    } else {
+        eprintln!("Error enabling service {}", name);
+    }
+
+    Ok(())
+}
+
+#[cfg(target_family = "unix")]
+async fn systemd_disable_service(name: &str) -> anyhow::Result<()> {
+    println!("Disabling Service {}", name);
+    let status = Command::new("/usr/bin/systemctl")
+        .arg("disable")
+        .arg(name)
+        .arg("--now")
+        .stdout(Stdio::piped())
+        .spawn()?
+        .wait()
+        .await?;
+    if status.success() {
+        println!("Service {} disabled successfully", name);
+    } else {
+        eprintln!("Error disabling service {}", name);
+    }
+
+    Ok(())
+}
