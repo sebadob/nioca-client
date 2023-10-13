@@ -1,13 +1,15 @@
 use crate::{
     auth_token, fetch_cert_ssh, fetch_cert_x509, req_client, CertX509Response, NiocaConfig,
-    SshCertType, SshCertificateResponse, VERSION,
+    SshCertType, SshCertificateResponse, ERR_TIMEOUT, VERSION,
 };
+use chrono::NaiveDateTime;
 use clap::{arg, Parser};
 use std::io::ErrorKind;
+use std::ops::Sub;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::fs;
 use tokio::process::Command;
+use tokio::{fs, time};
 
 /// This client fetches TLS certificates from Nioca
 #[derive(Debug, PartialEq, Parser)]
@@ -18,6 +20,7 @@ pub(crate) enum CliArgs {
     /// Uninstalls the nioca-client from the system
     Uninstall,
     FetchRoot(CmdFetchRoot),
+    Daemonize(CmdDaemonize),
     Ssh(CmdSsh),
     X509(CmdX509),
 }
@@ -31,12 +34,25 @@ pub(crate) struct CmdFetchRoot {
     pub config: Option<String>,
 
     /// Output path for the fetched certificates
-    #[arg(short, long, default_value = "./certs")]
+    #[arg(short, long, default_value = "$HOME/.nioca/")]
     pub destination: String,
 
     /// Fetches the root CA's certificate and verifies it with the given fingerprint
     #[arg(short, long)]
     pub fingerprint: String,
+}
+
+/// Run the client continuously as a daemon to always renew expiring certificates
+#[derive(Debug, PartialEq, Parser)]
+#[command(author, version)]
+pub(crate) struct CmdDaemonize {
+    /// Path to the config file (default $HOME/.nioca/config)
+    #[arg(short, long)]
+    pub config: Option<String>,
+
+    /// Output path for the fetched certificates
+    #[arg(short, long, default_value = "./certs")]
+    pub destination: String,
 }
 
 /// Fetch an SSH certificate
@@ -54,7 +70,7 @@ pub(crate) struct CmdSsh {
     /// Installs SSH certificates and keys after a successful fetch if the CertType is 'Host'.
     /// Adds the Public Key to known_hosts if the CertType is 'User'.
     #[arg(short = 'i', long, default_value = "true")]
-    pub install: Option<bool>,
+    pub install: bool,
 }
 
 /// Fetch a X509 certificate
@@ -80,17 +96,15 @@ pub async fn execute() -> anyhow::Result<()> {
             uninstall_from_sys().await?;
         }
         CliArgs::FetchRoot(cmd) => {
-            let config = get_config(&cmd.config).await;
-            fetch_root_ca(&cmd, &config).await?;
+            fetch_root_ca(&cmd).await?;
+        }
+        CliArgs::Daemonize(cmd) => {
+            daemonize(&cmd).await?;
         }
         CliArgs::Ssh(cmd) => {
-            let config = get_config(&cmd.config).await;
-            fetch_ssh(&cmd, &config).await?;
+            fetch_ssh(cmd, false).await?;
         }
-        CliArgs::X509(cmd) => {
-            let config = get_config(&cmd.config).await;
-            fetch_x509(&cmd, &config).await?
-        }
+        CliArgs::X509(cmd) => fetch_x509(cmd, false).await?,
     }
 
     Ok(())
@@ -238,7 +252,9 @@ async fn uninstall_from_sys() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn fetch_root_ca(args: &CmdFetchRoot, config: &NiocaConfig) -> anyhow::Result<()> {
+async fn fetch_root_ca(args: &CmdFetchRoot) -> anyhow::Result<()> {
+    let config = get_config(&args.config).await;
+
     let client = reqwest::ClientBuilder::new()
         .connect_timeout(Duration::from_secs(10))
         .https_only(true)
@@ -308,7 +324,41 @@ async fn fetch_root_ca(args: &CmdFetchRoot, config: &NiocaConfig) -> anyhow::Res
     Ok(())
 }
 
-async fn fetch_ssh(args: &CmdSsh, config: &NiocaConfig) -> anyhow::Result<()> {
+async fn daemonize(args: &CmdDaemonize) -> anyhow::Result<()> {
+    let cmd_ssh = CmdSsh {
+        config: args.config.clone(),
+        destination: args.destination.clone(),
+        install: true,
+    };
+    tokio::spawn(async move {
+        if let Err(err) = fetch_ssh(cmd_ssh, true).await {
+            println!("{}", err);
+        }
+    });
+
+    // sleep 3 seconds just to not mess up the logging for the very first 2 cert fetches
+    time::sleep(Duration::from_secs(3)).await;
+
+    let cmd_x509 = CmdX509 {
+        config: args.config.clone(),
+        destination: args.destination.clone(),
+    };
+    tokio::spawn(async move {
+        if let Err(err) = fetch_x509(cmd_x509, true).await {
+            println!("{}", err);
+        }
+    });
+
+    let (tx, rx) = flume::unbounded();
+    ctrlc::set_handler(move || tx.send(()).unwrap()).expect("Error setting Ctrl-C handler");
+    rx.recv_async().await.expect("awaiting exit signal handler");
+
+    Ok(())
+}
+
+async fn fetch_ssh(args: CmdSsh, daemonize: bool) -> anyhow::Result<()> {
+    let config = get_config(&args.config).await;
+
     let api_key = if let Some(key) = &config.api_key_ssh {
         key
     } else {
@@ -323,30 +373,47 @@ async fn fetch_ssh(args: &CmdSsh, config: &NiocaConfig) -> anyhow::Result<()> {
     let client = req_client(config.root_cert.clone());
     let bearer = auth_token(api_key);
 
-    println!("Fetching certificate from {}", url);
-    match fetch_cert_ssh(&client, url, &bearer).await {
-        Ok(resp) => {
-            let destination = destination(&args.destination);
-            if let Err(err) = save_files_ssh(&destination, &resp).await {
-                eprintln!("{}", err);
-            }
+    let mut next_fetch = *ERR_TIMEOUT;
+    loop {
+        println!("\nFetching SSH certificate from {}", url);
 
-            if let Some(i) = &args.install {
-                if *i {
+        match fetch_cert_ssh(&client, url, &bearer).await {
+            Ok(resp) => {
+                let destination = destination(&args.destination);
+                match save_files_ssh(&destination, &resp).await {
+                    Ok(valid_until) => {
+                        let now = system_to_naive_datetime(SystemTime::now());
+                        let diff = valid_until.sub(now).num_seconds() as u64;
+                        next_fetch = diff * 90 / 100;
+                    }
+                    Err(err) => eprintln!("Error fetching SSH certificate: {}", err),
+                }
+
+                if daemonize || args.install {
                     install_host_ssh(&resp).await?;
                     install_known_host(&resp).await?;
                 }
             }
+            Err(err) => {
+                eprintln!("{}", err);
+            }
         }
-        Err(err) => {
-            eprintln!("{}", err);
+
+        match daemonize {
+            true => {
+                println!("Fetching next SSH certificate in {} seconds", next_fetch);
+                time::sleep(Duration::from_secs(next_fetch)).await;
+            }
+            false => {
+                return Ok(());
+            }
         }
     }
-
-    Ok(())
 }
 
-async fn fetch_x509(args: &CmdX509, config: &NiocaConfig) -> anyhow::Result<()> {
+async fn fetch_x509(args: CmdX509, daemonize: bool) -> anyhow::Result<()> {
+    let config = get_config(&args.config).await;
+
     let api_key = if let Some(key) = &config.api_key_x509 {
         key
     } else {
@@ -361,20 +428,35 @@ async fn fetch_x509(args: &CmdX509, config: &NiocaConfig) -> anyhow::Result<()> 
     let client = req_client(config.root_cert.clone());
     let bearer = auth_token(api_key);
 
-    println!("Fetching certificate from {}", url);
-    match fetch_cert_x509(&client, url, &bearer).await {
-        Ok((certs, _not_after_sec)) => {
-            let destination = destination(&args.destination);
-            if let Err(err) = save_files_x509(&destination, &certs).await {
+    let mut next_fetch = *ERR_TIMEOUT;
+    loop {
+        println!("\nFetching X509 certificate from {}", url);
+
+        match fetch_cert_x509(&client, url, &bearer).await {
+            Ok((certs, not_after_sec)) => {
+                let destination = destination(&args.destination);
+                match save_files_x509(&destination, &certs).await {
+                    Ok(_) => {
+                        next_fetch = not_after_sec;
+                    }
+                    Err(err) => eprintln!("Error fetching X509 certificate: {}", err),
+                }
+            }
+            Err(err) => {
                 eprintln!("{}", err);
             }
         }
-        Err(err) => {
-            eprintln!("{}", err);
+
+        match daemonize {
+            true => {
+                println!("Fetching next X509 certificate in {} seconds", next_fetch);
+                time::sleep(Duration::from_secs(next_fetch)).await;
+            }
+            false => {
+                return Ok(());
+            }
         }
     }
-
-    Ok(())
 }
 
 pub fn fingerprint(value: &[u8]) -> String {
@@ -384,7 +466,10 @@ pub fn fingerprint(value: &[u8]) -> String {
     fingerprint_full
 }
 
-async fn save_files_ssh(out_dir: &str, certs: &SshCertificateResponse) -> anyhow::Result<()> {
+async fn save_files_ssh(
+    out_dir: &str,
+    certs: &SshCertificateResponse,
+) -> anyhow::Result<NaiveDateTime> {
     let out_dir = format!("{}ssh/", out_dir);
     fs::create_dir_all(&out_dir).await?;
 
@@ -455,7 +540,7 @@ async fn save_files_ssh(out_dir: &str, certs: &SshCertificateResponse) -> anyhow
         );
     }
 
-    Ok(())
+    Ok(valid_until)
 }
 
 async fn save_files_x509(out_dir: &str, certs: &CertX509Response) -> anyhow::Result<()> {
