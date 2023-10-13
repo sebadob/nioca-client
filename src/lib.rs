@@ -1,6 +1,7 @@
 use anyhow::Error;
 use chrono::Utc;
 use reqwest::header::AUTHORIZATION;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::string::ToString;
@@ -174,6 +175,28 @@ pub enum SshCertType {
     User,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ErrorResponse {
+    pub typ: ErrorResponseType,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum ErrorResponseType {
+    BadRequest,
+    Connection,
+    Database,
+    DatabaseIo,
+    Forbidden,
+    Internal,
+    InvalidToken,
+    NotFound,
+    Unauthorized,
+    ServiceUnavailable,
+    TooManyRequests,
+}
+
 pub(crate) fn req_client(root_cert: Option<reqwest::Certificate>) -> reqwest::Client {
     let mut client = reqwest::ClientBuilder::new()
         .connect_timeout(Duration::from_secs(10))
@@ -208,14 +231,33 @@ pub(crate) async fn fetch_cert_ssh(
     {
         Ok(resp) => {
             let status = resp.status();
-            match resp.json::<SshCertificateResponse>().await {
-                Ok(kp) => Ok(kp),
-                Err(err) => {
-                    let msg = format!(
-                        "{} - Error deserializing response into SshCertificateResponse: {}",
-                        status, err
-                    );
-                    Err(Error::msg(msg))
+
+            if status.is_success() {
+                match resp.json::<SshCertificateResponse>().await {
+                    Ok(kp) => Ok(kp),
+                    Err(err) => {
+                        let msg = format!(
+                            "{} - Error deserializing response into SshCertificateResponse: {}",
+                            status, err
+                        );
+                        Err(Error::msg(msg))
+                    }
+                }
+            } else if status == StatusCode::METHOD_NOT_ALLOWED {
+                let msg = r#"
+'405 Method Not Allowed' from Nioca Server.
+This usually happens if Nioca is sealed. Check and unseal if necessary."#;
+                Err(Error::msg(msg))
+            } else {
+                match resp.json::<ErrorResponse>().await {
+                    Ok(err) => Err(Error::msg(err.message)),
+                    Err(err) => {
+                        let msg = format!(
+                            "{} - Error deserializing response into ErrorResponse: {}",
+                            status, err
+                        );
+                        Err(Error::msg(msg))
+                    }
                 }
             }
         }
