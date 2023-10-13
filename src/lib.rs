@@ -259,7 +259,7 @@ pub(crate) async fn fetch_cert_x509(
                     let renew = if *NIOCA_RENEW_SECS > diff {
                         diff - *NIOCA_RENEW_SECS
                     } else {
-                        diff * 70 / 100
+                        diff * 90 / 100
                     };
 
                     Ok((certs, renew))
