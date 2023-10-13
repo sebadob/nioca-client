@@ -52,8 +52,8 @@ pub(crate) struct CmdSsh {
     pub destination: String,
 
     /// Installs SSH certificates and keys after a successful fetch if the CertType is 'Host'.
-    /// This can only be done as 'root' and will throw an error otherwise.
-    #[arg(short = 'i', long)]
+    /// Adds the Public Key to known_hosts if the CertType is 'User'.
+    #[arg(short = 'i', long, default_value = "true")]
     pub install: Option<bool>,
 }
 
@@ -80,15 +80,15 @@ pub async fn execute() -> anyhow::Result<()> {
             uninstall_from_sys().await?;
         }
         CliArgs::FetchRoot(cmd) => {
-            let config = get_config(&cmd.config);
+            let config = get_config(&cmd.config).await;
             fetch_root_ca(&cmd, &config).await?;
         }
         CliArgs::Ssh(cmd) => {
-            let config = get_config(&cmd.config);
+            let config = get_config(&cmd.config).await;
             fetch_ssh(&cmd, &config).await?;
         }
         CliArgs::X509(cmd) => {
-            let config = get_config(&cmd.config);
+            let config = get_config(&cmd.config).await;
             fetch_x509(&cmd, &config).await?
         }
     }
@@ -96,7 +96,7 @@ pub async fn execute() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_config(path: &Option<String>) -> NiocaConfig {
+async fn get_config(path: &Option<String>) -> NiocaConfig {
     if let Some(cfg) = path {
         dotenvy::from_filename(cfg).ok();
     } else {
@@ -112,7 +112,7 @@ fn get_config(path: &Option<String>) -> NiocaConfig {
             }
         }
     }
-    NiocaConfig::from_env()
+    NiocaConfig::from_env().await
 }
 
 async fn install_on_sys() -> anyhow::Result<()> {
@@ -437,11 +437,22 @@ async fn save_files_ssh(out_dir: &str, certs: &SshCertificateResponse) -> anyhow
         );
 
         println!(
-            "Connect to your target with\n\nssh -i {} USER@IP\n",
+            "Connect to your target with:\n\nssh -i {} USER@IP\n",
             path_key
         );
-    } else if certs.host_key_pair.typ == Some(SshCertType::Host) {
-        // TODO check auto install
+    } else {
+        println!(
+            r#"
+    Certificate Type: {:?}
+    Algorithm: {:?}
+    Allowed hostnames: {:?}
+    Certificate valid until: {:?}
+        "#,
+            cert.cert_type(),
+            cert.algorithm(),
+            cert.valid_principals(),
+            valid_until,
+        );
     }
 
     Ok(())
@@ -503,7 +514,14 @@ async fn install_host_ssh(certs: &SshCertificateResponse) -> anyhow::Result<()> 
     }
 
     let path_ca_pub = "/etc/ssh/id_nioca_ca.pub";
-    fs::write(&path_ca_pub, certs.user_ca_pub.as_bytes()).await?;
+    // fs::write(&path_ca_pub, certs.user_ca_pub.as_bytes()).await?;
+    if let Err(err) = fs::write(&path_ca_pub, certs.user_ca_pub.as_bytes()).await {
+        if err.kind() == ErrorKind::PermissionDenied {
+            let msg = "You can only install SSH Host certificates as root - exiting early";
+            eprintln!("{}", msg);
+            return Err(anyhow::Error::msg(msg));
+        }
+    }
 
     let path_id = "/etc/ssh/id_nioca_host";
     fs::write(&path_id, certs.host_key_pair.id.as_bytes()).await?;
@@ -515,6 +533,11 @@ async fn install_host_ssh(certs: &SshCertificateResponse) -> anyhow::Result<()> 
         fs::set_permissions(&path_id, Permissions::from_mode(0o600)).await?;
     }
 
+    // TODO `sshd` prints out a weird error when you log in with certificates, even though everything works fine:
+    // error: Public key for /etc/ssh/id_nioca_host does not match private key
+    // -> try to find the reason for that, since it does not make any sense
+    // -> we do not have (and need) any public key, but the certificate instead
+    // -> needs another sshd config adjustment here?
     let path_id_pub = "/etc/ssh/id_nioca_host.pub";
     fs::write(&path_id_pub, certs.host_key_pair.id_pub.as_bytes()).await?;
 
@@ -556,26 +579,30 @@ HostCertificate {}
 async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()> {
     use std::fmt::Write;
 
+    if certs.host_key_pair.typ == Some(SshCertType::Host) {
+        eprintln!("Received SSH Cert Type is 'Host' - not adding it to known hosts");
+        return Ok(());
+    }
+
     println!("Installing CA certificate into known hosts");
 
     // TODO remove the known hosts in $HOME? -> would not allow other users to log in?
-    // let home = match home::home_dir() {
-    //     Some(path) => path,
-    //     None => {
-    //         eprintln!("Cannot get home directory - exiting early");
-    //         return Ok(());
-    //     }
-    // };
-    //
-    // let path = format!("{}/.ssh/", home.display());
-    // let path_known_hosts = format!("{}/.ssh/known_hosts", home.display());
-    let path_known_hosts = "/etc/ssh/ssh_known_hosts";
+    let home = match home::home_dir() {
+        Some(path) => path,
+        None => {
+            eprintln!("Cannot get home directory - exiting early");
+            return Ok(());
+        }
+    };
+
+    let path = format!("{}/.ssh", home.display());
+    let path_known_hosts = format!("{}/known_hosts", path);
     if fs::File::open(&path_known_hosts).await.is_err() {
         println!(
             "known_hosts file not found in {} - creating it now",
             path_known_hosts
         );
-        // fs::create_dir_all(&path).await?;
+        fs::create_dir_all(&path).await?;
         fs::write(&path_known_hosts, b"").await?;
         #[cfg(target_family = "unix")]
         {
@@ -588,7 +615,7 @@ async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()
     let entry = format!("@cert-authority * {} nioca-ssh-ca", certs.user_ca_pub);
 
     let known_hosts = fs::read_to_string(&path_known_hosts).await?;
-    let mut known_hosts_new = fs::read_to_string(&path_known_hosts).await?;
+    let mut known_hosts_new = String::with_capacity(known_hosts.len() + 500);
     for line in known_hosts.lines() {
         if line.starts_with("@cert-authority ") && line.ends_with(" nioca-ssh-ca") {
             if line == entry {
@@ -602,7 +629,7 @@ async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()
                 );
             }
         } else {
-            writeln!(known_hosts_new, "{}", entry)?;
+            writeln!(known_hosts_new, "{}", line)?;
         }
     }
 

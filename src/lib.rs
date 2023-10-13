@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::string::ToString;
 use std::time::Duration;
+#[cfg(feature = "cli")]
+use tokio::fs;
 use tracing::debug;
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -45,7 +47,7 @@ pub struct NiocaConfig {
 }
 
 impl NiocaConfig {
-    pub fn from_env() -> Self {
+    pub async fn from_env() -> Self {
         dotenvy::dotenv().ok();
         let mut url = env::var("NIOCA_URL").expect("NIOCA_URL is not set");
         if url.ends_with('/') {
@@ -66,7 +68,28 @@ impl NiocaConfig {
                     .expect("Cannot build Root TLS from given NIOCA_ROOT_PEM");
                 (Some(root_pem), Some(root_cert))
             }
+            #[cfg(not(feature = "cli"))]
             Err(_) => (None, None),
+            #[cfg(feature = "cli")]
+            Err(_) => {
+                // if we do not have a configured env var, try to find an existing root PEM in
+                // the nioca config dir
+                match home::home_dir() {
+                    Some(path) => {
+                        let try_root_pem_path = format!("{}/.nioca/root.pem", path.display());
+                        match fs::read_to_string(&try_root_pem_path).await {
+                            Ok(root_pem) => {
+                                let root_cert =
+                                    reqwest::tls::Certificate::from_pem(root_pem.as_bytes())
+                                        .expect("Cannot build Root TLS from given NIOCA_ROOT_PEM");
+                                (Some(root_pem), Some(root_cert))
+                            }
+                            Err(_) => (None, None),
+                        }
+                    }
+                    None => (None, None),
+                }
+            }
         };
 
         debug!("Nioca URL: {}", url);
