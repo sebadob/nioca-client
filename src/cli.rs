@@ -699,28 +699,17 @@ async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()
 
     let entry = format!("@cert-authority * {} nioca-ssh-ca", certs.user_ca_pub);
 
-    let known_hosts = fs::read_to_string(&path_known_hosts).await?;
-    let mut known_hosts_new = String::with_capacity(known_hosts.len() + 500);
+    let mut known_hosts = fs::read_to_string(&path_known_hosts).await?;
     for line in known_hosts.lines() {
-        if line.starts_with("@cert-authority ") && line.ends_with(" nioca-ssh-ca") {
-            if line == entry {
-                println!("CA certificate already exists in known_hosts");
-            } else {
-                // in this case we do have another CA saved which we need to clean up
-                // -> do nothing
-                println!(
-                    "Found old CA certificate in {} which will be cleaned up:\n{}",
-                    path_known_hosts, line,
-                );
-            }
-        } else {
-            writeln!(known_hosts_new, "{}", line)?;
+        if line == entry {
+            // println!("CA certificate already exists in known_hosts");
+            return Ok(());
         }
     }
 
     // If we get until here, the cert does not exist in the known_hosts - append it to the end
-    writeln!(known_hosts_new, "{}", entry)?;
-    fs::write(&path_known_hosts, known_hosts_new).await?;
+    writeln!(known_hosts, "{}", entry)?;
+    fs::write(&path_known_hosts, known_hosts).await?;
 
     println!("CA certificate has been added to {}", path_known_hosts);
 

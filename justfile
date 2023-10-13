@@ -52,15 +52,34 @@ version:
 #    echo All tests successful
 
 
-build-cli: clippy
+build: clippy
     #!/usr/bin/env bash
     set -euxo pipefail
 
     # manually update the cross image: docker pull ghcr.io/cross-rs/x86_64-unknown-linux-musl:main
     which cross || echo "'cross' needs to be installed: cargo install cross --git https://github.com/cross-rs/cross"
 
+    mkdir -p out/x86_64
+    mkdir -p out/aarch64
+    mkdir -p out/windows
+    #mkdir -p out/mac_os
+
+    # linux x86 musl
     cross build --features "cli" --release --target x86_64-unknown-linux-musl
-    cp target/x86_64-unknown-linux-musl/release/nioca-client out/
+    cp target/x86_64-unknown-linux-musl/release/nioca-client out/x86_64/nioca-client-$TAG
+
+    # linux aarch64 musl
+    cross build --features "cli" --release --target aarch64-unknown-linux-musl
+    cp target/aarch64-unknown-linux-musl/release/nioca-client out/aarch64/nioca-client-$TAG
+
+    # windows
+    cross build --features "cli" --release --target x86_64-pc-windows-gnu
+    cp target/x86_64-pc-windows-gnu/release/nioca-client.exe out/windows/nioca-client-$TAG.exe
+
+    # TODO mac os currently does not work because of ring: https://github.com/briansmith/ring/issues/1442
+    # mac os
+    #cargo build --features "cli" --release --target x86_64-apple-darwin
+    #cp target/x86_64-apple-darwin/release/nioca-client.exe out/mac_os/nioca-client-$TAG.exe
 
 
 # makes sure everything is fine
