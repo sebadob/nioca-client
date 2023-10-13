@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "nioca-client"
-version = "0.4.0-20231012"
+version = "0.4.0-20231013"
 dependencies = [
  "actix-web",
  "anyhow",
