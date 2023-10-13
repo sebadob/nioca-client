@@ -1,7 +1,6 @@
 use anyhow::Error;
 use chrono::Utc;
 use reqwest::header::AUTHORIZATION;
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::string::ToString;
@@ -175,13 +174,13 @@ pub enum SshCertType {
     User,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ErrorResponse {
     pub typ: ErrorResponseType,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum ErrorResponseType {
     BadRequest,
@@ -243,7 +242,7 @@ pub(crate) async fn fetch_cert_ssh(
                         Err(Error::msg(msg))
                     }
                 }
-            } else if status == StatusCode::METHOD_NOT_ALLOWED {
+            } else if status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
                 let msg = r#"
 '405 Method Not Allowed' from Nioca Server.
 This usually happens if Nioca is sealed. Check and unseal if necessary."#;
