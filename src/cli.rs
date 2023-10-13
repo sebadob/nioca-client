@@ -4,6 +4,7 @@ use crate::{
 };
 use chrono::NaiveDateTime;
 use clap::{arg, Parser};
+use std::fmt::Write;
 use std::io::ErrorKind;
 use std::ops::Sub;
 use std::process::Stdio;
@@ -640,9 +641,26 @@ HostCertificate {}
         path_ca_pub, path_id, path_id_pub,
     );
 
+    // save new config
     let ssh_config = "/etc/ssh/sshd_config.d/10-nioca.conf";
     println!("Writing sshd certificate config to {}", ssh_config);
     fs::write(&ssh_config, config.as_bytes()).await?;
+
+    // make sure that the *.d folder is included in the sshd_config
+    let sshd_config_include = "Include /etc/ssh/sshd_config.d/*.conf";
+    let path_sshd_config = "/etc/ssh/sshd_config";
+    let mut sshd_config = fs::read_to_string(&path_sshd_config).await?;
+    let mut d_is_included = false;
+    for line in sshd_config.lines() {
+        if line == sshd_config_include {
+            d_is_included = true;
+            break;
+        }
+    }
+    if !d_is_included {
+        writeln!(sshd_config, "{}", sshd_config_include)?;
+        fs::write(&path_sshd_config, sshd_config).await?;
+    }
 
     println!("Restarting sshd to read the new config");
     let mut child = Command::new("/usr/bin/systemctl")
@@ -662,8 +680,6 @@ HostCertificate {}
 }
 
 async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()> {
-    use std::fmt::Write;
-
     if certs.host_key_pair.typ == Some(SshCertType::Host) {
         eprintln!("Received SSH Cert Type is 'Host' - not adding it to known hosts");
         return Ok(());
@@ -749,3 +765,24 @@ pub fn system_to_naive_datetime(t: SystemTime) -> chrono::NaiveDateTime {
 
     chrono::NaiveDateTime::from_timestamp_opt(sec + sec_diff, nsec).unwrap()
 }
+
+// fn systemd_service_file() -> String {
+//     let template = r#"[Unit]
+// Description=Meteo MotorPi Client
+// Requires=network-online.target
+// After=network-online.target
+// StartLimitIntervalSec=0
+//
+// [Service]
+// Restart=always
+// RestartSec=1
+// # root is mandatory for UART access
+// User=root
+// ExecStart=/home/netit/field-server-shutdown
+// WorkingDirectory=/home/netit
+//
+// [Install]
+// WantedBy=multi-user.target
+//
+//     "#;
+// }
