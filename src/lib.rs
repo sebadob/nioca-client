@@ -1,3 +1,5 @@
+// Copyright 2023 Sebastian Dobe <sebastiandobe@mailbox.org>
+
 use anyhow::Error;
 use chrono::Utc;
 use reqwest::header::AUTHORIZATION;
