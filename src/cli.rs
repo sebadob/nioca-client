@@ -9,8 +9,24 @@ use std::io::ErrorKind;
 use std::ops::Sub;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::fs::File;
 use tokio::process::Command;
 use tokio::{fs, time};
+
+#[cfg(target_family = "unix")]
+const FILE_NAME_CONFIG: &str = "config";
+#[cfg(not(target_family = "unix"))]
+const FILE_NAME_CONFIG: &str = "config.txt";
+
+#[cfg(target_family = "unix")]
+const FILE_NAME_EXE: &str = "nioca-client";
+#[cfg(not(target_family = "unix"))]
+const FILE_NAME_EXE: &str = "nioca-client.exe";
+
+#[cfg(target_family = "unix")]
+const SEPARATOR: &str = "/";
+#[cfg(not(target_family = "unix"))]
+const SEPARATOR: &str = "\\";
 
 /// This client fetches TLS certificates from Nioca
 #[derive(Debug, PartialEq, Parser)]
@@ -19,6 +35,7 @@ pub(crate) enum CliArgs {
     /// Installs the nioca-client into the system
     Install,
     /// Installs the nioca-client systemd service into the system
+    #[cfg(target_family = "unix")]
     InstallService,
     /// Uninstalls the nioca-client from the system
     Uninstall,
@@ -32,12 +49,23 @@ pub(crate) enum CliArgs {
 #[derive(Debug, PartialEq, Parser)]
 #[command(author, version)]
 pub(crate) struct CmdFetchRoot {
+    #[cfg(target_family = "unix")]
     /// Path to the config file (default $HOME/.nioca/config)
+    pub config: Option<String>,
+
+    #[cfg(not(target_family = "unix"))]
+    /// Path to the config file (default $HOME\.nioca\config.txt)
     #[arg(short, long)]
     pub config: Option<String>,
 
+    #[cfg(target_family = "unix")]
     /// Output path for the fetched certificates
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "./certs")]
+    pub destination: Option<String>,
+
+    #[cfg(not(target_family = "unix"))]
+    /// Output path for the fetched certificates
+    #[arg(short, long, default_value = ".\\certs")]
     pub destination: Option<String>,
 
     /// Fetches the root CA's certificate and verifies it with the given fingerprint
@@ -49,7 +77,13 @@ pub(crate) struct CmdFetchRoot {
 #[derive(Debug, PartialEq, Parser)]
 #[command(author, version)]
 pub(crate) struct CmdDaemonize {
+    #[cfg(target_family = "unix")]
     /// Path to the config file (default $HOME/.nioca/config)
+    #[arg(short, long)]
+    pub config: Option<String>,
+
+    #[cfg(not(target_family = "unix"))]
+    /// Path to the config file (default $HOME\.nioca\config.txt)
     #[arg(short, long)]
     pub config: Option<String>,
 
@@ -62,12 +96,24 @@ pub(crate) struct CmdDaemonize {
 #[derive(Debug, PartialEq, Parser)]
 #[command(author, version)]
 pub(crate) struct CmdSsh {
+    #[cfg(target_family = "unix")]
     /// Path to the config file (default $HOME/.nioca/config)
     #[arg(short, long)]
     pub config: Option<String>,
 
+    #[cfg(not(target_family = "unix"))]
+    /// Path to the config file (default $HOME\.nioca\config.txt)
+    #[arg(short, long)]
+    pub config: Option<String>,
+
+    #[cfg(target_family = "unix")]
     /// Output path for the fetched certificates
     #[arg(short, long, default_value = "./certs")]
+    pub destination: String,
+
+    #[cfg(not(target_family = "unix"))]
+    /// Output path for the fetched certificates
+    #[arg(short, long, default_value = ".\\certs")]
     pub destination: String,
 
     /// Installs SSH certificates and keys after a successful fetch if the CertType is 'Host'.
@@ -80,12 +126,24 @@ pub(crate) struct CmdSsh {
 #[derive(Debug, PartialEq, Parser)]
 #[command(author, version)]
 pub(crate) struct CmdX509 {
-    /// Path to the config (default $HOME/.nioca/config)
+    #[cfg(target_family = "unix")]
+    /// Path to the config file (default $HOME/.nioca/config)
     #[arg(short, long)]
     pub config: Option<String>,
 
+    #[cfg(not(target_family = "unix"))]
+    /// Path to the config file (default $HOME\.nioca\config.txt)
+    #[arg(short, long)]
+    pub config: Option<String>,
+
+    #[cfg(target_family = "unix")]
     /// Output path for the fetched certificates
     #[arg(short, long, default_value = "./certs")]
+    pub destination: String,
+
+    #[cfg(not(target_family = "unix"))]
+    /// Output path for the fetched certificates
+    #[arg(short, long, default_value = ".\\certs")]
     pub destination: String,
 }
 
@@ -93,31 +151,18 @@ pub async fn execute() -> anyhow::Result<()> {
     let args: CliArgs = CliArgs::parse();
     match args {
         CliArgs::Install => {
-            #[cfg(not(target_family = "unix"))]
-            eprintln!("The Installation only works on unix systems at the moment");
-
-            #[cfg(target_family = "unix")]
             install_on_sys().await?;
         }
+        #[cfg(target_family = "unix")]
         CliArgs::InstallService => {
-            #[cfg(not(target_family = "unix"))]
-            eprintln!("The Service File can only be installed on unix systems");
-
-            #[cfg(target_family = "unix")]
-            {
-                // check if nioca-client is already installed globally and install if not
-                let path = "/usr/local/bin/nioca-client";
-                if fs::try_exists(&path).await.is_err() {
-                    install_on_sys().await?;
-                }
-                install_systemd_service().await?;
+            // check if nioca-client is already installed globally and install if not
+            let path = "/usr/local/bin/nioca-client";
+            if fs::try_exists(&path).await.is_err() {
+                install_on_sys().await?;
             }
+            install_systemd_service().await?;
         }
         CliArgs::Uninstall => {
-            #[cfg(not(target_family = "unix"))]
-            eprintln!("The Uninstallation only works on unix systems at the moment");
-
-            #[cfg(target_family = "unix")]
             uninstall_from_sys().await?;
         }
         CliArgs::FetchRoot(cmd) => {
@@ -143,7 +188,13 @@ async fn get_config(path: &Option<String>) -> NiocaConfig {
             Some(path) => path,
             None => panic!("Cannot get home directory"),
         };
-        let config_dir = format!("{}/.nioca/config", home.display());
+        let config_dir = format!(
+            "{}{}.nioca{}{}",
+            home.display(),
+            SEPARATOR,
+            SEPARATOR,
+            FILE_NAME_CONFIG
+        );
         match dotenvy::from_filename(config_dir) {
             Ok(_env) => {}
             Err(_) => {
@@ -168,11 +219,11 @@ async fn install_on_sys() -> anyhow::Result<()> {
     println!("Installing nioca-client into {}", path);
 
     let current_exe = std::env::current_exe().expect("Cannot get nioca-clients own name");
-    let target_exe = format!("{}/nioca-client", path);
+    let target_exe = format!("{}/{}", path, FILE_NAME_EXE);
     let _ = fs::remove_file(&target_exe).await;
     if fs::copy(&current_exe, &target_exe).await.is_err() {
         // if we get an error, we may not be root -> install into $HOME instead
-        let target_exe_home = format!("{}/nioca-client", config_dir);
+        let target_exe_home = format!("{}/{}", config_dir, FILE_NAME_EXE);
         eprintln!(
             "Unable to install nioca-client globally (not root?), installing it into {} instead.\n\
             You may need to add this directory to your $PATH or copy it manually:\n\n\
@@ -192,10 +243,10 @@ async fn install_on_sys() -> anyhow::Result<()> {
 #NIOCA_X509_CLIENT_ID=
 #NIOCA_X509_API_KEY=
     "#;
-    let path_env = format!("{}/config", config_dir);
+    let path_env = format!("{}/{}", config_dir, FILE_NAME_CONFIG);
 
     // only write the env file, if it does not already exist
-    if fs::File::open(&path_env).await.is_err() {
+    if File::open(&path_env).await.is_err() {
         fs::write(&path_env, empty_env).await?;
         #[cfg(target_family = "unix")]
         {
@@ -210,24 +261,24 @@ async fn install_on_sys() -> anyhow::Result<()> {
 The nioca-client has been installed successfully.
 You should be able to just execute
 
-nioca-client -h
+{} -h
 
 and see the help output.
 Before you can use it, you need to adjust the config file and paste the correct values:
 
-vim {}
+{}
 
 When the config is set up, you need to fetch Nioca's root certificate to make sure that all future
 connections are valid and secure. You need the Nioca's Root Certificates fingerprint. You either get
 it from the logs output of the Nioca container or from the UI.
 
-nioca-client fetch-root -f NiocasRootCertFingerprint
+{} fetch-root -f NiocasRootCertFingerprint
 
 After the Root certificate is installed, you can optionally install it into the systems trust store
 too, which is different on every OS. The nioca-client though works without doing this. The root
 certificate can be found in
 
-cat {}/root.pem
+{}/root.pem
 
 and inspected with the default OpenSSL tools, for instance:
 openssl x509 -in {}/root.pem -text -noout
@@ -235,7 +286,88 @@ openssl x509 -in {}/root.pem -text -noout
 If you want to set up an SSH host, you should add a cronjob as root to regularly update the
 certificate before it expires. How often depends on your config in Nioca of course.
     "#,
-        path_env, path_env, path_env
+        FILE_NAME_EXE, path_env, FILE_NAME_EXE, path_env, path_env
+    );
+
+    Ok(())
+}
+
+#[cfg(not(target_family = "unix"))]
+async fn install_on_sys() -> anyhow::Result<()> {
+    let home = match home::home_dir() {
+        Some(path) => path,
+        None => panic!("Cannot get home directory"),
+    };
+    let config_dir = format!("{}\\.nioca", home.display());
+    println!("Config dir: {}", config_dir);
+    fs::create_dir_all(&config_dir).await?;
+
+    let target_exe = format!("{}{}{}", config_dir, SEPARATOR, FILE_NAME_EXE);
+    println!("Installing nioca-client into {}", target_exe);
+
+    let current_exe = std::env::current_exe().expect("Cannot get nioca-clients own name");
+    let _ = fs::remove_file(&target_exe).await;
+    if fs::copy(&current_exe, &target_exe).await.is_err() {
+        eprintln!(
+            "Unable to install nioca-client into {}\n\
+            You may need to add this directory to your $PATH",
+            target_exe,
+        );
+    }
+
+    let empty_env = r#"NIOCA_URL=https://ca.local.dev:8443
+
+#NIOCA_SSH_CLIENT_ID=
+#NIOCA_SSH_API_KEY=
+
+#NIOCA_X509_CLIENT_ID=
+#NIOCA_X509_API_KEY=
+    "#;
+    let path_env = format!("{}{}{}", config_dir, SEPARATOR, FILE_NAME_CONFIG);
+
+    // only write the env file, if it does not already exist
+    if File::open(&path_env).await.is_err() {
+        fs::write(&path_env, empty_env).await?;
+    }
+
+    println!(
+        r#"
+The nioca-client has been installed successfully.
+
+You need to update your $PATH variable and add: {}
+to be able to execute 'nioca-client.exe' directly. Afterwards, you should be able to just execute
+
+{} -h
+
+and see the help output. Otherwise, you can use the full path too
+
+{}{}{} -h
+
+Before you can use it, you need to adjust the config file and paste the correct values:
+
+start {}
+
+When the config is set up, you need to fetch Nioca's root certificate to make sure that all future
+connections are valid and secure. You need the Nioca's Root Certificates fingerprint. You either get
+it from the logs output of the Nioca container or from the UI.
+
+{} fetch-root -f NiocasRootCertFingerprint
+
+After the Root certificate is installed, you can optionally install it into the systems trust store
+too, which is different on every OS. The nioca-client though works without doing this. The root
+certificate can be found in
+
+{}{}root.pem
+"#,
+        config_dir,
+        FILE_NAME_EXE,
+        config_dir,
+        SEPARATOR,
+        FILE_NAME_EXE,
+        path_env,
+        FILE_NAME_EXE,
+        config_dir,
+        SEPARATOR,
     );
 
     Ok(())
@@ -331,6 +463,27 @@ async fn uninstall_from_sys() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_family = "unix"))]
+async fn uninstall_from_sys() -> anyhow::Result<()> {
+    let home = match home::home_dir() {
+        Some(path) => path,
+        None => panic!("Cannot get home directory"),
+    };
+    let config_dir = format!("{}\\.nioca", home.display());
+    println!("Removing config dir: {}", config_dir);
+    if let Err(err) = fs::remove_dir_all(&config_dir).await {
+        if err.kind() == ErrorKind::PermissionDenied {
+            eprintln!("Permission Denied for removing {}", config_dir);
+            return Ok(());
+        } else if err.kind() != ErrorKind::NotFound {
+            eprintln!("Error removing config: {:?}", err);
+            return Ok(());
+        }
+    }
+
+    Ok(())
+}
+
 async fn fetch_root_ca(args: &CmdFetchRoot) -> anyhow::Result<()> {
     let config = get_config(&args.config).await;
 
@@ -374,14 +527,15 @@ async fn fetch_root_ca(args: &CmdFetchRoot) -> anyhow::Result<()> {
                         } else {
                             match home::home_dir() {
                                 Some(path) => {
-                                    let p = format!("{}/.nioca", path.display());
+                                    let p = format!("{}{}.nioca", path.display(), SEPARATOR);
                                     fs::create_dir_all(&p).await?;
-                                    let target = format!("{}/root.pem", p);
+                                    let target = format!("{}{}root.pem", p, SEPARATOR);
                                     println!("Saving root certificate to {}", target);
                                     fs::write(&target, root_pem.as_bytes())
                                         .await
                                         .expect("Writing Root CA to $HOME");
 
+                                    #[cfg(target_family = "unix")]
                                     println!(
                                         "\nYou can inspect the certificate with default openssl tools:\n\
                                         openssl x509 -in {} -text -noout",
@@ -554,7 +708,7 @@ async fn save_files_ssh(
     out_dir: &str,
     certs: &SshCertificateResponse,
 ) -> anyhow::Result<NaiveDateTime> {
-    let out_dir = format!("{}ssh/", out_dir);
+    let out_dir = format!("{}ssh{}", out_dir, SEPARATOR);
     fs::create_dir_all(&out_dir).await?;
 
     println!("Saving SSH certificate to {}", out_dir);
@@ -576,12 +730,14 @@ async fn save_files_ssh(
     .expect("Writing Certificate");
 
     // the key must only be readable by the current user
-    #[cfg(target_family = "unix")]
-    {
-        use std::fs::Permissions;
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path_key, Permissions::from_mode(0o600)).await?;
-    }
+    // #[cfg(target_family = "unix")]
+    // {
+    //     use std::fs::Permissions;
+    //     use std::os::unix::fs::PermissionsExt;
+    //     fs::set_permissions(&path_key, Permissions::from_mode(0o600)).await?;
+    // }
+    // the key must only be readable by the current user
+    set_perm_user_only(&path_key).await?;
 
     println!("SSH Certificate saved successfully.");
 
@@ -628,7 +784,7 @@ async fn save_files_ssh(
 }
 
 async fn save_files_x509(out_dir: &str, certs: &CertX509Response) -> anyhow::Result<()> {
-    let out_dir = format!("{}x509/", out_dir);
+    let out_dir = format!("{}x509{}", out_dir, SEPARATOR);
     let out_na = format!("{}{}", out_dir, certs.not_after);
     fs::create_dir_all(&out_na).await?;
 
@@ -645,32 +801,109 @@ async fn save_files_x509(out_dir: &str, certs: &CertX509Response) -> anyhow::Res
         .expect("Writing Certificate");
 
     println!("Saving certificates to {}", out_na);
-    fs::write(format!("{}/cert.pem", out_na), certs.cert.as_bytes())
-        .await
-        .expect("Writing Certificate");
-    fs::write(format!("{}/chain.pem", out_na), certs.cert_chain.as_bytes())
-        .await
-        .expect("Writing Certificate");
-    let path_key_na = format!("{}/key.pem", out_na);
+    fs::write(
+        format!("{}{}cert.pem", out_na, SEPARATOR),
+        certs.cert.as_bytes(),
+    )
+    .await
+    .expect("Writing Certificate");
+    fs::write(
+        format!("{}{}chain.pem", out_na, SEPARATOR),
+        certs.cert_chain.as_bytes(),
+    )
+    .await
+    .expect("Writing Certificate");
+    let path_key_na = format!("{}{}key.pem", out_na, SEPARATOR);
     fs::write(&path_key_na, certs.key.as_bytes())
         .await
         .expect("Writing Certificate");
 
     // the key must only be readable by the current user
-    #[cfg(target_family = "unix")]
+    set_perm_user_only(&path_key).await?;
+
+    Ok(())
+}
+
+#[cfg(target_family = "unix")]
+async fn set_perm_user_only(path: &str) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::fs::File;
+
+    let file = File::open(path).await?;
+    let mut perms = file.metadata().await?.permissions();
+    perms.set_mode(0o600);
+    file.set_permissions(perms).await?;
+
+    let file = File::open(path).await?;
+    let mut perms = file.metadata().await?.permissions();
+    perms.set_mode(0o600);
+    file.set_permissions(perms).await?;
+
+    Ok(())
+}
+
+#[cfg(not(target_family = "unix"))]
+async fn set_perm_user_only(path: &str) -> anyhow::Result<()> {
+    // lets get our username first
+    let out = Command::new("powershell.exe")
+        .arg("-c")
+        .arg("$env:UserName")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await?;
+    let username = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+    println!("Setting access only to {} for {}", username, path);
+
+    // remove inheritance
+    if !Command::new("icacls.exe")
+        .arg(path)
+        .arg("/inheritance:r")
+        .stdout(Stdio::piped())
+        .spawn()?
+        .wait()
+        .await?
+        .success()
     {
-        use std::os::unix::fs::PermissionsExt;
-        use tokio::fs::File;
+        eprintln!("Error removing file inheritance for {}", path);
+    }
 
-        let file = File::open(path_key).await?;
-        let mut perms = file.metadata().await?.permissions();
-        perms.set_mode(0o600);
-        file.set_permissions(perms).await?;
-
-        let file = File::open(path_key_na).await?;
-        let mut perms = file.metadata().await?.permissions();
-        perms.set_mode(0o600);
-        file.set_permissions(perms).await?;
+    // set ownership
+    if !Command::new("icacls.exe")
+        .arg(path)
+        .arg("/grant")
+        .arg(format!("{}:F", username))
+        .stdout(Stdio::piped())
+        .spawn()?
+        .wait()
+        .await?
+        .success()
+    {
+        eprintln!("Error granting user full access to {}", path);
+    }
+    if !Command::new("takeown.exe")
+        .arg("/F")
+        .arg(path)
+        .stdout(Stdio::piped())
+        .spawn()?
+        .wait()
+        .await?
+        .success()
+    {
+        eprintln!("Error taking ownership for {}", path);
+    }
+    if !Command::new("icacls.exe")
+        .arg(path)
+        .arg("/grant:r")
+        .arg(format!("{}:F", username))
+        .stdout(Stdio::piped())
+        .spawn()?
+        .wait()
+        .await?
+        .success()
+    {
+        eprintln!("Error granting 'read' to {}", path);
     }
 
     Ok(())
@@ -678,85 +911,86 @@ async fn save_files_x509(out_dir: &str, certs: &CertX509Response) -> anyhow::Res
 
 async fn install_host_ssh(certs: &SshCertificateResponse) -> anyhow::Result<()> {
     if certs.host_key_pair.typ == Some(SshCertType::User) {
-        eprintln!("Received SSH Cert Type is 'User' - not installing anything");
+        // eprintln!("Received SSH Cert Type is 'User' - not installing anything");
         return Ok(());
     }
 
-    let path_ca_pub = "/etc/ssh/id_nioca_ca.pub";
-    // fs::write(&path_ca_pub, certs.user_ca_pub.as_bytes()).await?;
-    if let Err(err) = fs::write(&path_ca_pub, certs.user_ca_pub.as_bytes()).await {
-        if err.kind() == ErrorKind::PermissionDenied {
-            let msg = "You can only install SSH Host certificates as root - exiting early";
-            eprintln!("{}", msg);
-            return Err(anyhow::Error::msg(msg));
-        }
-    }
+    #[cfg(not(target_family = "unix"))]
+    println!("Received an SSH host certificate which cannot be installed automatically on Windows");
 
-    let path_id = "/etc/ssh/id_nioca_host";
-    fs::write(&path_id, certs.host_key_pair.id.as_bytes()).await?;
-    // the key must only be readable by the current user
     #[cfg(target_family = "unix")]
     {
-        use std::fs::Permissions;
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path_id, Permissions::from_mode(0o600)).await?;
-    }
-
-    // TODO `sshd` prints out a weird error when you log in with certificates, even though everything works fine:
-    // error: Public key for /etc/ssh/id_nioca_host does not match private key
-    // -> try to find the reason for that, since it does not make any sense
-    // -> we do not have (and need) any public key, but the certificate instead
-    // -> needs another sshd config adjustment here?
-    let path_id_pub = "/etc/ssh/id_nioca_host.pub";
-    fs::write(&path_id_pub, certs.host_key_pair.id_pub.as_bytes()).await?;
-
-    let config = format!(
-        r#"## Nioca SSH certificate configuration
-
-# The User CA to trust - this must be the public key of the 'group' this client belongs to.
-TrustedUserCAKeys {}
-
-# This host's SSH certificate key pair
-HostKey {}
-HostCertificate {}
-
-    "#,
-        path_ca_pub, path_id, path_id_pub,
-    );
-
-    // save new config
-    let ssh_config = "/etc/ssh/sshd_config.d/10-nioca.conf";
-    println!("Writing sshd certificate config to {}", ssh_config);
-    fs::write(&ssh_config, config.as_bytes()).await?;
-
-    // make sure that the *.d folder is included in the sshd_config
-    let sshd_config_include = "Include /etc/ssh/sshd_config.d/*.conf";
-    let path_sshd_config = "/etc/ssh/sshd_config";
-    let mut sshd_config = fs::read_to_string(&path_sshd_config).await?;
-    let mut d_is_included = false;
-    for line in sshd_config.lines() {
-        if line == sshd_config_include {
-            d_is_included = true;
-            break;
+        let path_ca_pub = "/etc/ssh/id_nioca_ca.pub";
+        // fs::write(&path_ca_pub, certs.user_ca_pub.as_bytes()).await?;
+        if let Err(err) = fs::write(&path_ca_pub, certs.user_ca_pub.as_bytes()).await {
+            if err.kind() == ErrorKind::PermissionDenied {
+                let msg = "You can only install SSH Host certificates as root - exiting early";
+                eprintln!("{}", msg);
+                return Err(anyhow::Error::msg(msg));
+            }
         }
-    }
-    if !d_is_included {
-        writeln!(sshd_config, "{}", sshd_config_include)?;
-        fs::write(&path_sshd_config, sshd_config).await?;
-    }
 
-    println!("Restarting sshd to read the new config");
-    let mut child = Command::new("/usr/bin/systemctl")
-        .arg("restart")
-        .arg("sshd")
-        .stdout(Stdio::piped())
-        .spawn()?;
+        let path_id = "/etc/ssh/id_nioca_host";
+        fs::write(&path_id, certs.host_key_pair.id.as_bytes()).await?;
+        // the key must only be readable by the current user
+        set_perm_user_only(&path_id).await?;
 
-    let status = child.wait().await?;
-    if status.success() {
-        println!("ssh was restarted successfully");
-    } else {
-        eprintln!("Error restarting sshd, please check the logs manually");
+        // TODO `sshd` prints out a weird error when you log in with certificates, even though everything works fine:
+        // error: Public key for /etc/ssh/id_nioca_host does not match private key
+        // -> try to find the reason for that, since it does not make any sense
+        // -> we do not have (and need) any public key, but the certificate instead
+        // -> needs another sshd config adjustment here?
+        let path_id_pub = "/etc/ssh/id_nioca_host.pub";
+        fs::write(&path_id_pub, certs.host_key_pair.id_pub.as_bytes()).await?;
+
+        let config = format!(
+            r#"## Nioca SSH certificate configuration
+    
+    # The User CA to trust - this must be the public key of the 'group' this client belongs to.
+    TrustedUserCAKeys {}
+    
+    # This host's SSH certificate key pair
+    HostKey {}
+    HostCertificate {}
+    
+        "#,
+            path_ca_pub, path_id, path_id_pub,
+        );
+
+        // save new config
+        let ssh_config = "/etc/ssh/sshd_config.d/10-nioca.conf";
+        println!("Writing sshd certificate config to {}", ssh_config);
+        fs::write(&ssh_config, config.as_bytes()).await?;
+
+        // make sure that the *.d folder is included in the sshd_config
+        let sshd_config_include = "Include /etc/ssh/sshd_config.d/*.conf";
+        let path_sshd_config = "/etc/ssh/sshd_config";
+        let mut sshd_config = fs::read_to_string(&path_sshd_config).await?;
+        let mut d_is_included = false;
+        for line in sshd_config.lines() {
+            if line == sshd_config_include {
+                d_is_included = true;
+                break;
+            }
+        }
+        if !d_is_included {
+            writeln!(sshd_config, "{}", sshd_config_include)?;
+            fs::write(&path_sshd_config, sshd_config).await?;
+        }
+
+        println!("Restarting sshd to read the new config");
+        let mut child = Command::new("/usr/bin/systemctl")
+            .arg("restart")
+            .arg("sshd")
+            .stdout(Stdio::piped())
+            .spawn()?;
+
+        let status = child.wait().await?;
+        if status.success() {
+            println!("ssh was restarted successfully");
+        } else {
+            eprintln!("Error restarting sshd, please check the logs manually");
+        }
     }
 
     Ok(())
@@ -779,9 +1013,9 @@ async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()
         }
     };
 
-    let path = format!("{}/.ssh", home.display());
-    let path_known_hosts = format!("{}/known_hosts", path);
-    if fs::File::open(&path_known_hosts).await.is_err() {
+    let path = format!("{}{}.ssh", home.display(), SEPARATOR);
+    let path_known_hosts = format!("{}{}known_hosts", path, SEPARATOR);
+    if File::open(&path_known_hosts).await.is_err() {
         println!(
             "known_hosts file not found in {} - creating it now",
             path_known_hosts
@@ -815,11 +1049,12 @@ async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()
     Ok(())
 }
 
+#[inline(always)]
 fn destination(destination: &str) -> String {
-    if destination.ends_with('/') {
+    if destination.ends_with(SEPARATOR) {
         destination.to_string()
     } else {
-        format!("{}/", destination)
+        format!("{}{}", destination, SEPARATOR)
     }
 }
 
