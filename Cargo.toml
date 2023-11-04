@@ -14,6 +14,7 @@ panic = 'abort'
 axum = ["dep:axum-server"]
 actix = ["dep:actix-web", "dep:rustls"]
 cli = ["ssh", "dep:clap", "dep:hex", "dep:home", "dep:ring"]
+generic = []
 ssh = ["dep:ssh-key"]
 
 [dependencies]

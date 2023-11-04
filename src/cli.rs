@@ -827,7 +827,6 @@ async fn save_files_x509(out_dir: &str, certs: &CertX509Response) -> anyhow::Res
 #[cfg(target_family = "unix")]
 async fn set_perm_user_only(path: &str) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    use tokio::fs::File;
 
     let file = File::open(path).await?;
     let mut perms = file.metadata().await?.permissions();
@@ -933,7 +932,7 @@ async fn install_host_ssh(certs: &SshCertificateResponse) -> anyhow::Result<()> 
         let path_id = "/etc/ssh/id_nioca_host";
         fs::write(&path_id, certs.host_key_pair.id.as_bytes()).await?;
         // the key must only be readable by the current user
-        set_perm_user_only(&path_id).await?;
+        set_perm_user_only(path_id).await?;
 
         // TODO `sshd` prints out a weird error when you log in with certificates, even though everything works fine:
         // error: Public key for /etc/ssh/id_nioca_host does not match private key
@@ -945,14 +944,14 @@ async fn install_host_ssh(certs: &SshCertificateResponse) -> anyhow::Result<()> 
 
         let config = format!(
             r#"## Nioca SSH certificate configuration
-    
+
     # The User CA to trust - this must be the public key of the 'group' this client belongs to.
     TrustedUserCAKeys {}
-    
+
     # This host's SSH certificate key pair
     HostKey {}
     HostCertificate {}
-    
+
         "#,
             path_ca_pub, path_id, path_id_pub,
         );
@@ -1022,12 +1021,7 @@ async fn install_known_host(certs: &SshCertificateResponse) -> anyhow::Result<()
         );
         fs::create_dir_all(&path).await?;
         fs::write(&path_known_hosts, b"").await?;
-        #[cfg(target_family = "unix")]
-        {
-            use std::fs::Permissions;
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path_known_hosts, Permissions::from_mode(0o600)).await?;
-        }
+        set_perm_user_only(&path_known_hosts).await?;
     }
 
     let entry = format!("@cert-authority * {} nioca-ssh-ca", certs.user_ca_pub);
@@ -1058,7 +1052,7 @@ fn destination(destination: &str) -> String {
     }
 }
 
-pub fn system_to_naive_datetime(t: SystemTime) -> chrono::NaiveDateTime {
+pub fn system_to_naive_datetime(t: SystemTime) -> NaiveDateTime {
     let (sec, nsec) = match t.duration_since(UNIX_EPOCH) {
         Ok(dur) => (dur.as_secs() as i64, dur.subsec_nanos()),
         Err(e) => {
@@ -1081,7 +1075,7 @@ pub fn system_to_naive_datetime(t: SystemTime) -> chrono::NaiveDateTime {
     let local_now_secs = chrono::Local::now().naive_local().timestamp();
     let sec_diff = local_now_secs - utc_now_secs;
 
-    chrono::NaiveDateTime::from_timestamp_opt(sec + sec_diff, nsec).unwrap()
+    NaiveDateTime::from_timestamp_opt(sec + sec_diff, nsec).unwrap()
 }
 
 /// Returns (BasePath, ServiceName, FileContents) for the systemd *.service file

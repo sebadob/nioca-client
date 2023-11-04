@@ -1,27 +1,25 @@
 use crate::{auth_token, fetch_cert_x509, req_client, CertX509Response, NiocaConfig, ERR_TIMEOUT};
-use axum_server::tls_rustls::RustlsConfig;
+use anyhow::Error;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time;
 use tracing::{error, info};
 
-pub struct NiocaAxum;
+pub struct NiocaGeneric;
 
-impl NiocaAxum {
-    pub async fn spawn(
-        config: NiocaConfig,
-    ) -> anyhow::Result<watch::Receiver<Option<RustlsConfig>>> {
+impl NiocaGeneric {
+    pub fn spawn(config: NiocaConfig) -> anyhow::Result<watch::Receiver<Option<CertX509Response>>> {
         let (tx, rx) = watch::channel(None);
 
         let api_key = if let Some(key) = &config.api_key_x509 {
             key.to_string()
         } else {
-            return Err(anyhow::Error::msg("NIOCA_X509_API_KEY is not set"));
+            return Err(Error::msg("NIOCA_X509_API_KEY is not set"));
         };
         let url = if let Some(url) = &config.url_x509 {
             url.to_string()
         } else {
-            return Err(anyhow::Error::msg("NIOCA_X509_CLIENT_ID is not set"));
+            return Err(Error::msg("NIOCA_X509_CLIENT_ID is not set"));
         };
 
         tokio::spawn(async move {
@@ -33,7 +31,9 @@ impl NiocaAxum {
                 match fetch_cert_x509(&client, &url, &bearer).await {
                     Ok((certs, not_after_sec)) => {
                         next_fetch = Some(not_after_sec);
-                        Self::send_config(&certs, &tx).await;
+                        if let Err(err) = tx.send(Some(certs)) {
+                            error!("Sending CertX509Response: {:?}", err);
+                        }
                     }
                     Err(err) => {
                         error!("{}", err);
@@ -53,17 +53,5 @@ impl NiocaAxum {
         });
 
         Ok(rx)
-    }
-
-    async fn send_config(certs: &CertX509Response, tx: &watch::Sender<Option<RustlsConfig>>) {
-        let chain = format!("{}\n{}", certs.cert, certs.cert_chain);
-        let chain_vec = chain.as_bytes().to_vec();
-        let key_vec = certs.key.as_bytes().to_vec();
-
-        let cfg = RustlsConfig::from_pem(chain_vec, key_vec)
-            .await
-            .expect("Building RustlsConfig from Nioca certs");
-
-        tx.send(Some(cfg)).expect("Sending RustlsConfig");
     }
 }
