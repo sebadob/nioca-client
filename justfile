@@ -9,9 +9,10 @@ clippy:
     set -euxo pipefail
     clear
 
-    cargo clippy --features "cli"
     cargo clippy --features "actix"
     cargo clippy --features "axum"
+    cargo clippy --features "cli"
+    cargo clippy --features "generic"
 
 
 # runs the application
