@@ -27,6 +27,9 @@ pub mod axum;
 #[cfg(feature = "cli")]
 pub mod cli;
 
+#[cfg(feature = "generic")]
+pub mod generic;
+
 #[derive(Debug, Clone)]
 pub struct NiocaConfig {
     pub url: String,
@@ -111,7 +114,7 @@ pub(crate) struct CertX509 {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
-pub(crate) struct CertX509Response {
+pub struct CertX509Response {
     pub cert: String,
     pub cert_fingerprint: String,
     pub cert_chain: String,
@@ -123,7 +126,7 @@ pub(crate) struct CertX509Response {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
-pub(crate) enum X509CertFormat {
+pub enum X509CertFormat {
     Pem,
     Der,
     PKCS12,

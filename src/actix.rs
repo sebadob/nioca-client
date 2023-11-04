@@ -13,12 +13,12 @@ pub async fn spawn(config: NiocaConfig) -> anyhow::Result<watch::Receiver<Option
     let api_key = if let Some(key) = &config.api_key_x509 {
         key.to_string()
     } else {
-        return Err(anyhow::Error::msg("NIOCA_X509_API_KEY is not set"));
+        return Err(Error::msg("NIOCA_X509_API_KEY is not set"));
     };
     let url = if let Some(url) = &config.url_x509 {
         url.to_string()
     } else {
-        return Err(anyhow::Error::msg("NIOCA_X509_CLIENT_ID is not set"));
+        return Err(Error::msg("NIOCA_X509_CLIENT_ID is not set"));
     };
 
     actix_web::rt::spawn(async move {
