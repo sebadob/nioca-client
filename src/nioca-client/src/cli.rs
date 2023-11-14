@@ -1,9 +1,8 @@
-use crate::{
-    auth_token, fetch_cert_ssh, fetch_cert_x509, req_client, CertX509Response, NiocaConfig,
-    SshCertType, SshCertificateResponse, ERR_TIMEOUT, VERSION,
-};
 use chrono::NaiveDateTime;
 use clap::{arg, Parser};
+use nioca_common::ssh::{fetch_cert_ssh, SshCertType, SshCertificateResponse};
+use nioca_common::x509::{fetch_cert_x509, CertX509Response};
+use nioca_common::{auth_token, req_client, NiocaConfig, ERR_TIMEOUT, VERSION};
 use std::fmt::Write;
 use std::io::ErrorKind;
 use std::ops::Sub;
@@ -43,6 +42,7 @@ pub(crate) enum CliArgs {
     Daemonize(CmdDaemonize),
     Ssh(CmdSsh),
     X509(CmdX509),
+    Serve(CmdServe),
 }
 
 /// Fetch the current Nioca root certificate with the given fingerprint SHA256 hash
@@ -147,6 +147,25 @@ pub(crate) struct CmdX509 {
     pub destination: String,
 }
 
+/// Serve a Single-Sign On UI on your localhost
+#[derive(Debug, PartialEq, Parser)]
+#[command(author, version)]
+pub(crate) struct CmdServe {
+    #[cfg(target_family = "unix")]
+    /// Path to the config file (default $HOME/.nioca/config)
+    #[arg(short, long)]
+    pub config: Option<String>,
+
+    #[cfg(not(target_family = "unix"))]
+    /// Path to the config file (default $HOME\.nioca\config.txt)
+    #[arg(short, long)]
+    pub config: Option<String>,
+
+    /// The port used for the UI
+    #[arg(short, long, default_value = "1337")]
+    pub port: u16,
+}
+
 pub async fn execute() -> anyhow::Result<()> {
     let args: CliArgs = CliArgs::parse();
     match args {
@@ -175,6 +194,7 @@ pub async fn execute() -> anyhow::Result<()> {
             fetch_ssh(cmd, false).await?;
         }
         CliArgs::X509(cmd) => fetch_x509(cmd, false).await?,
+        CliArgs::Serve(cmd) => nioca_client_backend::run(cmd.port).await?,
     }
 
     Ok(())

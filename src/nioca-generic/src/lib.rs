@@ -1,9 +1,13 @@
-use crate::{auth_token, fetch_cert_x509, req_client, CertX509Response, NiocaConfig, ERR_TIMEOUT};
 use anyhow::Error;
+use nioca_common::x509::fetch_cert_x509;
+use nioca_common::{auth_token, req_client, ERR_TIMEOUT};
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time;
 use tracing::{error, info};
+
+pub use nioca_common::x509::CertX509Response;
+pub use nioca_common::NiocaConfig;
 
 pub struct NiocaGeneric;
 

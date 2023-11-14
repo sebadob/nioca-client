@@ -1,0 +1,17 @@
+[package]
+name = "nioca-axum"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0.75"
+axum-server = { version = "0.5", features = ["tls-rustls"] }
+nioca-common = { path = "../nioca-common" }
+tokio = { version = "1.26", features = [] }
+tracing = "0.1.40"
+
+[dev-dependencies]
+pretty_assertions = "1"
+tokio-test = "*"
