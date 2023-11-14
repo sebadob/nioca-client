@@ -1,0 +1,148 @@
+/* Default colors */
+body {
+  --col-act1: #ab4d59;
+  --col-act1a: #ab333f;
+  --col-act2: #71a64b;
+  --col-act2a: #62a632;
+  --col-acnt: #32687d;
+  --col-acnta: #4b6f7d;
+  --col-ok: #62a632;
+  --col-err: #ab333f;
+  --col-glow: #545454;
+  --col-gmid: #b2b2b2;
+  --col-ghigh: #f2f2f2;
+  --col-text: #4d4d4d;
+  --col-bg: #f7f7f7;
+}
+
+/* Dark theme colors */
+body.dark-theme {
+  --col-act1: #ab4d59;
+  --col-act1a: #ab333f;
+  --col-act2: #71a64b;
+  --col-act2a: #62a632;
+  --col-acnt: #32687d;
+  --col-acnta: #4b6f7d;
+  --col-ok: #62a632;
+  --col-err: #ab333f;
+  --col-glow: #545454;
+  --col-gmid: #b2b2b2;
+  --col-ghigh: #f2f2f2;
+  --col-text: #f7f7f7;
+  //--col-text: #4d4d4d;
+  --col-bg: #4d4d4d;
+  //--col-bg: #f7f7f7;
+}
+
+/* Styles for users who prefer dark mode at the OS level */
+@media (prefers-color-scheme: dark) {
+  /* defaults to dark theme */
+  body {
+    --col-act1: #ab4d59;
+    --col-act1a: #ab333f;
+    --col-act2: #71a64b;
+    --col-act2a: #62a632;
+    --col-acnt: #32687d;
+    --col-acnta: #4b6f7d;
+    --col-ok: #62a632;
+    --col-err: #ab333f;
+    --col-glow: #545454;
+    --col-gmid: #b2b2b2;
+    --col-ghigh: #f2f2f2;
+    --col-text: #f7f7f7;
+    //--col-text: #4d4d4d;
+    --col-bg: #4d4d4d;
+    //--col-bg: #f7f7f7;
+  }
+  /* Override dark mode with light mode styles if the user decides to swap */
+  body.light-theme {
+    --col-act1: #ab4d59;
+    --col-act1a: #ab333f;
+    --col-act2: #71a64b;
+    --col-act2a: #62a632;
+    --col-acnt: #32687d;
+    --col-acnta: #4b6f7d;
+    --col-ok: #62a632;
+    --col-err: #ab333f;
+    --col-glow: #545454;
+    --col-gmid: #b2b2b2;
+    --col-ghigh: #f2f2f2;
+    --col-text: #4d4d4d;
+    --col-bg: #f7f7f7;
+  }
+}
+
+.flex-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.flex-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
+.flex-2 {
+  flex: 2;
+}
+
+.flex-3 {
+  flex: 3;
+}
+
+.bold {
+  font-weight: bold;
+}
+
+.ok {
+  color: var(--col-ok);
+}
+
+.error {
+  color: var(--col-err);
+}
+
+.margin-05 {
+  margin: .5rem
+}
+
+.margin-10 {
+  margin: 1rem;
+}
+
+.ms-05 {
+  margin: 0 .5rem;
+}
+
+.ms-10 {
+  margin: 0 1rem;
+}
+
+.mh-05 {
+  margin: .5rem 0;
+}
+
+.mh-10 {
+  margin: 1rem 0;
+}
+
+.gap-05 {
+  gap: .5rem
+}
+
+.gap-10 {
+  gap: 1rem
+}
+
+.gap-15 {
+  gap: 1.5rem
+}
+
+.gap-20 {
+  gap: 2rem
+}

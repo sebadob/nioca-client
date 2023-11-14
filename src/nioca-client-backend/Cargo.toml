@@ -1,0 +1,41 @@
+[package]
+name = "nioca-client-backend"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+nioca-client-app = { path = "../nioca-client-app" }
+
+anyhow = "1.0.71"
+axum = { version = "0.6.4", features = ["headers", "http2"] }
+axum-extra = { version = "0.8", features = ["cookie"] }
+console_error_panic_hook = "0.1"
+console_log = "1"
+cfg-if = "1"
+dotenvy = "0.15"
+http = "0.2.8"
+leptos = { version = "0.5.2", features = ["ssr"] }
+leptos_axum = { version = "0.5.2", features = ["nonce"] }
+leptos_dom = { version = "0.5.2", features = ["ssr"] }
+leptos_meta = { version = "0.5.2", features = ["ssr"] }
+server_fn = { version = "0.5.2", features = ["rustls", "ssr"] }
+leptos_router = { version = "0.5.2", features = ["ssr"] }
+log = "0.4"
+mime_guess = { version = "2" }
+rust-embed = { version = "8", features = ["axum", "mime_guess", "tokio"] }
+serde = "1.0.164"
+tokio = { version = "1.25.0", features = [] }
+tower = { version = "0.4.13", features = [] }
+tower-http = { version = "0.4", features = ["full"] }
+thiserror = "1.0.38"
+tracing = { version = "0.1.37" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing"] }
+
+[dev-dependencies]
+pretty_assertions = "1"
+tokio-test = "*"
+
+[build-dependencies]
+dotenvy = "0.15"

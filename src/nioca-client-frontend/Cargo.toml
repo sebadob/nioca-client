@@ -1,0 +1,21 @@
+[package]
+name = "nioca-client-frontend"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nioca-client-app = { path = "../nioca-client-app", features = ["hydrate"] }
+
+console_error_panic_hook = "0.1"
+console_log = "1"
+http = "0.2.8"
+leptos = { version = "0.5.2", default-features = false, features = ["hydrate"] }
+leptos_meta = { version = "0.5.2", features = ["hydrate"] }
+leptos_router = { version = "0.5.2", features = ["hydrate"] }
+log = "0.4"
+wasm-bindgen = "=0.2.88"
