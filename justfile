@@ -9,32 +9,32 @@ clippy:
     set -euxo pipefail
     clear
 
-    cargo clippy --features "actix"
-    cargo clippy --features "axum"
-    cargo clippy --features "cli"
-    cargo clippy --features "generic"
+    cargo clippy --lib --no-default-features --features hydrate
+    cargo clippy --bin=nioca-client --no-default-features --features ssr
+#    cargo clippy --features "actix"
+#    cargo clippy --features "axum"
+#    cargo clippy --features "cli"
+#    cargo clippy --features "generic"
 
+# build the application in development mode
+build-cli:
+    clear && DEV_MODE=true cargo leptos build
 
-# runs the application
-run command="-h":
-    #!/usr/bin/env bash
-    set -euxo pipefail
-    clear
-
-    cargo run --features "cli" -- {{ command }}
-
-
-## runs the UI in development mode
-#run-ui:
-#    #!/usr/bin/env bash
-#    cd frontend
-#    npm run dev -- --host
-
+# build the application in release mode
+build-cli-release:
+    clear && DEV_MODE=false cargo leptos build -r -P
 
 # prints out the currently set version
 version:
     echo $TAG
 
+# runs the application
+run command="-h": build-cli
+    #!/usr/bin/env bash
+    set -euxo pipefail
+    clear
+
+    DEV_MODE=true ./target/debug/nioca-client {{ command }}
 
 ## runs the full set of tests
 #test:
