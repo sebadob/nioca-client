@@ -1,0 +1,37 @@
+[package]
+name = "nioca-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+nioca-common = { path = "../nioca-common", features = ["ssh"] }
+nioca-client-backend = { path = "../nioca-client-backend" }
+
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["alloc", "clock", "serde", "std"] }
+dotenvy = "0.15"
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "rustls-tls-webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+# todo we probably do not need 'full' for everything -> split up by feature
+tokio = { version = "1.26", features = [] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing"] }
+
+base64 = { version = "0.21" }
+clap = { version = "4.1", features = ["derive"] }
+ctrlc = { version = "3.4.1", features = ["termination"] }
+flume = { version = "0.11" }
+headers = { version = "0.3" }
+hex = { version = "0.4" }
+home = { version = "0.5" }
+ring = { version = "0.17" }
+rpassword = { version = "7.2" }
+serde_json = { version = "1" }
+ssh-key = { version = "0.6" }
+x509-parser = { version = "0.15", features = ["ring", "validate", "verify"] }
+
+[dev-dependencies]
+pretty_assertions = "1"
+tokio-test = "*"
